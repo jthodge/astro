@@ -199,7 +199,7 @@ export async function renderComponent(result: SSRResult, displayName: string, Co
 
   let metadata: AstroComponentMetadata = { displayName };
 
-  if (Component == null) {
+  if (Component == null && !_props['client:only']) {
     throw new Error(`Unable to render ${metadata.displayName} because it is ${Component}!\nDid you forget to import the component or is it possible there is a typo?`);
   }
 
@@ -213,22 +213,36 @@ export async function renderComponent(result: SSRResult, displayName: string, Co
     metadata.componentUrl = hydration.componentUrl;
   }
 
+
   let renderer: Renderer | undefined;
-  for (const r of renderers) {
-    if (await r.ssr.check(Component, props, children)) {
-      renderer = r;
-      break;
+  if (renderers.length === 1) {
+      renderer = renderers[0];
+  } else if (metadata.hydrate !== 'only') {
+    for (const r of renderers) {
+      if (await r.ssr.check(Component, props, children)) {
+        renderer = r;
+        break;
+      }
     }
+  } else {
+    console.log(metadata);
+    // renderer = 
   }
 
   if (!renderer) {
-    if (typeof Component === 'string') {
+    if (metadata.hydrate === 'only') {
+      // noop
+    } else if (typeof Component === 'string') {
       html = await renderAstroComponent(await render`<${Component}${spreadAttributes(props)}>${children}</${Component}>`);
     } else {
       throw new Error(`Astro is unable to render ${metadata.displayName}!\nIs there a renderer to handle this type of component defined in your Astro config?`);
     }
   } else {
-    ({ html } = await renderer.ssr.renderToStaticMarkup(Component, props, children));
+    if (metadata.hydrate === 'only') {
+      html = await renderSlot(result, slots?.fallback);
+    } else {
+      ({ html } = await renderer.ssr.renderToStaticMarkup(Component, props, children));
+    }
   }
 
   if (renderer?.polyfills?.length) {
@@ -242,10 +256,9 @@ export async function renderComponent(result: SSRResult, displayName: string, Co
 
   // Include componentExport name and componentUrl in hash to dedupe identical islands
   const astroId = shorthash.unique(`<!--${metadata.componentExport!.value}:${metadata.componentUrl}-->\n${html}`);
-
   result.scripts.add(await generateHydrateScript({ renderer, astroId, props }, metadata as Required<AstroComponentMetadata>));
 
-  return `<astro-root uid="${astroId}">${html}</astro-root>`;
+  return `<astro-root uid="${astroId}">${html ?? ''}</astro-root>`;
 }
 
 /** Create the Astro.fetchContent() runtime function. */
